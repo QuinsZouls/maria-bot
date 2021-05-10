@@ -209,7 +209,6 @@ def createOrder():
                         type='MARKET',
                         quantity=volume[coin]
                     )
-                    print(buy_limit)
                 # error handling here in case position cannot be placed
                 except Exception as e:
                     print('Error creating order: ')
