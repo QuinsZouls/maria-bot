@@ -9,4 +9,4 @@ ENV binance_secret_stalkbot_testnet=youapikey
 
 RUN pip install python-binance
 
-CMD ["python", "maria_bot.py"]
+CMD ["python", "-u", "maria_bot.py"]
