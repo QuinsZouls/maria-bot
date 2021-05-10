@@ -1,5 +1,6 @@
 # use for environment variables
 import os
+import math
 
 # needed for the binance API and websockets
 from binance.client import Client
@@ -42,12 +43,38 @@ else:
     client = Client(api_key_live, api_secret_live)
 
 
-
 ####################################################
 #                   USER INPUTS                    #
 # You may edit to adjust the parameters of the bot #
 ####################################################
 
+# select what to pair the coins to and pull all coins paied with PAIR_WITH
+PAIR_WITH = 'USDT'
+
+# Define the size of each trade, by default in USDT
+QUANTITY = 100
+
+# List of pairs to exlcude
+# by default we're excluding the most popular fiat pairs
+# and some margin keywords, as we're only working on the SPOT account
+FIATS = ['EURUSDT', 'GBPUSDT', 'JPYUSDT', 'USDUSDT', 'DOWN', 'UP']
+
+# the amount of time in MINUTES to calculate the difference from the current price
+TIME_DIFFERENCE = 5
+
+# the difference in % between the first and second checks for the price, by default set at 10 minutes apart.
+CHANGE_IN_PRICE = 3
+
+# define in % when to sell a coin that's not making a profit
+STOP_LOSS = 3
+
+# define in % when to take profit on a profitable coin
+TAKE_PROFIT = 6
+
+####################################################
+#                END OF USER INPUTS                #
+#                  Edit with care                  #
+####################################################
 
 
 # coins that bought by the bot since its start
@@ -61,7 +88,7 @@ if TESTNET:
     coins_bought_file_path = 'testnet_' + coins_bought_file_path
 
 # if saved coins_bought json file exists then load it
-if os.path.isfile(coins_bought_file_path):
+if os.path.isfile(coins_bought_file_path) and os.stat(coins_bought_file_path).st_size != 0:
     with open(coins_bought_file_path) as file:
         coins_bought = json.load(file)
 
@@ -100,8 +127,8 @@ def wait_for_price():
 
         # calculate the difference between the first and last price reads
         for coin in initial_price:
-            threshold_check = (float(initial_price[coin]['price']) - float(
-                last_price[coin]['price'])) / float(last_price[coin]['price']) * 100
+            threshold_check = (float(last_price[coin]['price']) - float(
+                initial_price[coin]['price'])) / float(last_price[coin]['price']) * 100
 
             # each coin with higher gains than our CHANGE_IN_PRICE is added to the volatile_coins dict
             if threshold_check > CHANGE_IN_PRICE:
@@ -155,7 +182,7 @@ def convert_volume():
     return volume, last_price
 
 
-def trade():
+def createOrder():
     '''Place Buy market orders for each volatile coin found'''
 
     volume, last_price = convert_volume()
@@ -168,7 +195,7 @@ def trade():
             # only buy if the there are no active trades on the coin
             if coin not in coins_bought or coins_bought[coin] == None:
                 print(f' preparing to buy {volume[coin]} {coin}')
-
+                buy_limit = {}
                 if TESTNET:
                     # create test order before pushing an actual order
                     test_order = client.create_test_order(
@@ -182,14 +209,30 @@ def trade():
                         type='MARKET',
                         quantity=volume[coin]
                     )
-
+                    print(buy_limit)
                 # error handling here in case position cannot be placed
                 except Exception as e:
+                    print('Error creating order: ')
                     print(e)
+                finally:
+                    if buy_limit['fills'] != None:
+                        qty = 0.0
+                        # Generate accurate qty
+                        for fill in buy_limit['fills']:
+                            qty = qty + float(fill['qty']) - \
+                                float(fill['commission'])
+                        orders[coin] = {
+                            'symbol': buy_limit['symbol'],
+                            'orderid': buy_limit['orderId'],
+                            'timestamp': buy_limit['transactTime'],
+                            'bought_at': buy_limit['fills'][0]['price'],
+                            'volume': qty
+                        }
+                    else:
+                        print('No fills order ')
+                    # run the else block if the position has been placed and return order info
+                    # orders[coin] = client.get_all_orders(symbol=coin, limit=1)
 
-                # run the else block if the position has been placed and return order info
-                else:
-                    orders[coin] = client.get_all_orders(symbol=coin, limit=1)
             else:
                 print(
                     f'Signal detected, but there is already an active trade on {coin}')
@@ -201,37 +244,22 @@ def trade():
 
 def update_porfolio(orders, last_price, volume):
     '''add every coin bought to our portfolio for tracking/selling later'''
-
-    for coin in orders:
-        try:
-            coins_bought[coin] = {
-                'symbol': orders[coin][0]['symbol'],
-                'orderid': orders[coin][0]['orderId'],
-                'timestamp': orders[coin][0]['time'],
-                'bought_at': last_price[coin]['price'],
-                'volume': volume[coin]
-            }
-
-        # error handling here in case position cannot be placed
-        except Exception as e:
-            coins_bought[coin] = {
-                'symbol': 'ERROR',
-                'orderid': orders[coin][0]['orderId'],
-                'timestamp': orders[coin][0]['time'],
-                'bought_at': last_price[coin]['price'],
-                'volume': volume[coin]
-            }
-
-        # save the coins in a json file in the same directory
-        with open(coins_bought_file_path, 'w') as file:
-            json.dump(coins_bought, file, indent=4)
+    try:
+        for coin in orders:
+            coins_bought[coin] = orders[coin]
+            # save the coins in a json file in the same directory
+            with open(coins_bought_file_path, 'w') as file:
+                json.dump(coins_bought, file, indent=4)
+    except Exception as e:
+        print('Update portfolio error: ')
+        print(e)
 
 
 def sell_coins():
     '''sell coins that have reached the STOP LOSS or TAKE PROFIT thershold'''
 
     last_price = get_price()
-
+    coins_sold = {}
     for coin in coins_bought:
         if coins_bought[coin] != None:
             # define stop loss and take profit
@@ -264,7 +292,7 @@ def sell_coins():
                         side='SELL',
                         type='MARKET',
                         quantity=round(
-                            float(currentBalance['free']), precision)
+                            float(currentBalance['free']) * 0.995, precision)
                     )
 
                 # error handling here in case position cannot be placed
@@ -273,12 +301,21 @@ def sell_coins():
 
                 # run the else block if the position has been placed and update the coins bought json file
                 else:
-                    coins_bought[coin] = None
-                    with open(coins_bought_file_path, 'w') as file:
-                        json.dump(coins_bought, file, indent=4)
+                    coins_sold[coin] = coins_bought[coin]
             else:
                 print(
                     f'TP or SL not yet reached, not selling {coin} for now...')
+    return coins_sold
+# Create async function to prevent empty arrays
+
+
+def remove_from_portfolio(coins_sold):
+    '''Remove coins sold due to SL or TP from portofio'''
+    for coin in coins_sold:
+        coins_bought.pop(coin)
+
+    with open(coins_bought_file_path, 'w') as file:
+        json.dump(coins_bought, file, indent=4)
 
 
 if __name__ == '__main__':
@@ -287,8 +324,10 @@ if __name__ == '__main__':
         try:
             balance = client.get_asset_balance(asset=PAIR_WITH)
             print('Balance: ', balance['free'], PAIR_WITH)
-            orders, last_price, volume = trade()
+            orders, last_price, volume = createOrder()
             update_porfolio(orders, last_price, volume)
-            sell_coins()
+            coins_sold = sell_coins()
+            remove_from_portfolio(coins_sold)
         except Exception as e:
-            print('CRITICAL ERROR: ', e)
+            print('CRITICAL ERROR: ')
+            print(e)
