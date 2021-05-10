@@ -21,11 +21,12 @@ api_key_live = os.getenv('binance_api_stalkbot_live')
 api_secret_live = os.getenv('binance_secret_stalkbot_live')
 ```
 ## Code settings
-Testnet
+### Testnet
 ```python
 TESTNET = False
 ```
-Trading, edit according to your needs
+### Trading
+Edit according to your needs
 ```python
 # select what to pair the coins to and pull all coins paied with PAIR_WITH
 PAIR_WITH = 'USDT'
@@ -51,14 +52,19 @@ STOP_LOSS = 3
 TAKE_PROFIT = 6
 ```
 ## Docker
-Build image
+### Build image
 ```bash
 docker build -t maria_bot .
 ```
-Run container
+### Run container
 
 ```bash
 docker run -d --restart unless-stopped maria_bot
+```
+### View logs
+
+```bash
+docker logs CONTAINER_ID
 ```
 
 Please make sure to update tests as appropriate.
